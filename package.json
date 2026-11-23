@@ -1,0 +1,11 @@
+{
+  "name": "starfarer-ascii-space-game-engine",
+  "version": "1.0.0",
+  "description": "High-detail ASCII 4X space engine: Newtonian flight, manual docking/landing, EVA, mag-boot walking, mining, scanning, scavenging.",
+  "type": "module",
+  "scripts": {
+    "serve": "python3 -m http.server 8000",
+    "test": "node test/sim-test.mjs && node test/render-test.mjs"
+  },
+  "license": "MIT"
+}
