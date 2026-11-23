@@ -62,7 +62,7 @@ if (scene === 'orbit') {
   sh.landedOn = G.world.moon; sh.landedName = 'KVELD';
 } else if (scene === 'topdown') {
   const st = G.world.stations.find(s => s.id === 'aurora');
-  sh.pos = { x: st.pos.x, y: st.pos.y - 55, z: 0 };
+  sh.pos = { x: st.pos.x, y: st.pos.y - 25, z: 0 };
   sh.vel = { ...st.vel };
   G.cam.mode = 'top'; G.settings.iso = false; G.cam.zoom = 1.0;
 } else if (scene === 'interior') {
