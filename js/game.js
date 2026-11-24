@@ -12,11 +12,11 @@ const BASE_PRICES = { metal: 12, ice: 8, rock: 5, carbon: 15 };
 
 export function newGame(seed) {
   const fresh = createPlayer();
-  G.world.update(G.time, 0); // ensure orbiters have current positions
   G.player = fresh;
   G.drones.length = 0; G.projectiles.length = 0; G.particles.length = 0; G.pickups.length = 0;
   G.target = null;
   G.time = 8 * 3600; G.day = 1; G.timeScale = 1;
+  G.world.update(G.time, 0); // place orbiters at the new mission clock
   G.stats = { mined: 0, kills: 0, earned: 0, deaths: 0, dockedAt: {}, scanned: {} };
   G.lastDock = null; G.deathInfo = null;
   G.uiMode = 'play';
@@ -122,9 +122,13 @@ export function handleUiInput(Gp, dt) {
   if (inp.hit('Tab')) cycleTarget(Gp);
   if (inp.hit('KeyU')) { if (sh.dockedTo) undock(Gp); else saveGame(false); }
   if (inp.hit('KeyB')) callRescue(Gp);
+  if (inp.hit('KeyG')) {
+    Gp.settings.dampeners = !Gp.settings.dampeners;
+    Gp.hud.log(`FLIGHT ASSIST ${Gp.settings.dampeners ? 'ON — inertial dampeners hold station' : 'OFF — pure Newtonian drift'}`, '#7af2ff');
+  }
 
   // context interact
-  if (inp.hit('KeyF')) interact(Gp);
+  if (inp.hit('KeyE')) interact(Gp);
 
   // gear (allowed anytime; takeoff needs gear up)
   if (inp.hit('KeyL') && pl.mode === 'ship') {
@@ -345,13 +349,13 @@ export function onPlayerHit(Gp, dmg, pos) {
 }
 
 // ---------------------------------------------------------------- docking / anchor / land
-function nearestPort(Gp) {
-  const sh = Gp.player.ship;
+function nearestPort(Gp, pos) {
+  const p = pos || Gp.player.ship.pos;
   let best = null;
   for (const st of Gp.world.stations) {
     for (let i = 0; i < st.ports.length; i++) {
       const port = st.ports[i];
-      const d = vdist(sh.pos, port.pos);
+      const d = vdist(p, port.pos);
       if (!best || d < best.d) best = { st, port, d, idx: i };
     }
   }
@@ -384,7 +388,21 @@ export function interact(Gp) {
 
   if (pl.mode === 'eva') {
     if (vdist(pl.eva.pos, sh.pos) < 15) { boardShip(Gp); return; }
-    Gp.hud.log('NOTHING TO INTERACT WITH', '#ff9d5c');
+    // space-walker airlock: drift into a dock collar and cycle in on foot
+    const np = nearestPort(Gp, pl.eva.pos);
+    if (np && np.d < 20) {
+      const sv = surfaceVelocity(np.st, pl.eva.pos);
+      if (vlen(vsub(pl.eva.vel, sv)) < 8) {
+        Gp.stats.dockedAt[np.st.id] = 1;
+        Gp.lastDock = { type: 'station', id: np.st.id, label: np.st.name };
+        enterStation(Gp, np.st.id);
+        Gp.hud.log('AIRLOCK DOCK — your ship remains outside', '#7af2ff');
+        return;
+      }
+      Gp.hud.log(`AIRLOCK HOLD — RELATIVE VELOCITY ${vlen(vsub(pl.eva.vel, sv)).toFixed(1)} m/s (need < 8)`, '#ff9d5c');
+      return;
+    }
+    Gp.hud.log('NOTHING TO INTERACT WITH — BOARD YOUR SHIP [J]', '#ff9d5c');
     return;
   }
 
@@ -431,7 +449,7 @@ function doDock(Gp, np) {
   Gp.stats.dockedAt[st.id] = 1;
   Gp.lastDock = { type: 'station', id: st.id, label: st.name };
   Gp.audio.dock();
-  Gp.hud.log(`HARD DOCK — ${st.name} · AIRLOCK READY [F]`, '#b7ff7a');
+  Gp.hud.log(`HARD DOCK — ${st.name} · AIRLOCK READY [E]`, '#b7ff7a');
 }
 
 function undock(Gp) {
@@ -485,12 +503,21 @@ function exitInterior(Gp) {
     const st = Gp.world.stations.find(s => s.id === map.stationId);
     pl.mode = 'walk';
     const dir = vnorm(qrot(st.quat, v3(0, 1, 0)));
-    pl.foot.pos = vadd(st.pos, vscale(dir, st.size * 0.9 + 1));
-    pl.foot.vel = surfaceVelocity(st, pl.foot.pos);
-    pl.foot.up = dir;
+    // spawn ON the actual surface (hull sphere or nearby pad)
+    let raw = vadd(st.pos, vscale(dir, st.size * 1.1 + 2));
+    const surf = findSurface(Gp.world, raw);
+    let fp = raw, up = dir, body = st;
+    if (surf) {
+      fp = vadd(surf.center || surf.body.pos, vscale(surf.normal, (surf.pad ? 6 : surf.radius) + 1.0));
+      up = surf.normal;
+      body = surf.body;
+    }
+    pl.foot.pos = fp;
+    pl.foot.vel = surfaceVelocity(body, fp);
+    pl.foot.up = up;
     pl.foot.attached = true;
     pl.foot.magboots = true;
-    pl.foot.body = st;
+    pl.foot.body = body;
     pl.interior = null;
     Gp.hud.log('AIRLOCK CYCLING — MAG BOOTS ON HULL', '#7af2ff');
     return;
@@ -621,7 +648,7 @@ function handleMarketInput(Gp) {
   const inp = Gp.input;
   const sh = Gp.player.ship;
   const mk = Gp.market;
-  if (inp.hit('Escape') || inp.hit('KeyF')) { Gp.uiMode = 'play'; return; }
+  if (inp.hit('Escape') || inp.hit('KeyE')) { Gp.uiMode = 'play'; return; }
   const priceFuel = 2, priceRepair = 3;
   if (inp.hit('Digit1')) {
     if (mk.kind === 'market') {
@@ -734,36 +761,52 @@ function updatePrompts(Gp) {
   const sh = pl.ship;
   let prompt = '';
   if (pl.mode === 'ship') {
-    if (sh.dockedTo) prompt = '[F] ENTER STATION   [U] UNDOCK';
-    else if (sh.landedOn) prompt = sh.gearDown ? '[J] EXIT ON FOOT   [L] RETRACT GEAR THEN [R] LIFT OFF' : '[J] EXIT ON FOOT   [R] THRUST TO LIFT OFF';
+    if (sh.dockedTo) prompt = '[E] ENTER STATION   [U] UNDOCK';
+    else if (sh.landedOn) prompt = sh.gearDown ? '[E] EXIT ON FOOT   [L] RETRACT GEAR THEN [R] LIFT OFF' : '[E] EXIT ON FOOT   [R] THRUST TO LIFT OFF';
     else if (sh.anchoredTo) prompt = '[K] RELEASE ANCHOR   [J] EVA ONTO ROCK';
     else {
       const np = nearestPort(Gp);
       if (np && np.d < 26) {
         const rel = vlen(vsub(sh.vel, surfaceVelocity(np.st, sh.pos)));
-        prompt = rel < 5 ? `[F] DOCK → ${np.st.name}` : `DOCK? MATCH VELOCITY (${rel.toFixed(1)} m/s)`;
+        prompt = rel < 5 ? `[E] DOCK → ${np.st.name}` : `DOCK? MATCH VELOCITY (${rel.toFixed(1)} m/s)`;
       } else {
-        let anchorable = false;
-        for (const a of Gp.world.asteroids) { if (vdist(sh.pos, a.pos) - a.radius < 30) { anchorable = true; break; } }
-        if (anchorable) prompt = '[K] MAG-ANCHOR TO ROCK';
-        else if (sh.gearDown) prompt = 'GEAR DOWN — descend gently to land';
+        // landing-pad guidance
+        let padBest = null;
+        for (const st of Gp.world.stations) {
+          for (let i = 0; i < st.pads.length; i++) {
+            const d = vdist(sh.pos, st.pads[i].pos);
+            if (d < 220 && (!padBest || d < padBest.d)) padBest = { st, i, d };
+          }
+        }
+        if (padBest) prompt = `[L] GEAR · DESCEND ON PAD ${padBest.i + 1} (${padBest.d.toFixed(0)} m)`;
+        else {
+          let anchorable = false;
+          for (const a of Gp.world.asteroids) { if (vdist(sh.pos, a.pos) - a.radius < 30) { anchorable = true; break; } }
+          if (anchorable) prompt = '[K] MAG-ANCHOR TO ROCK';
+          else if (sh.gearDown) prompt = 'GEAR DOWN — descend gently to land';
+        }
       }
     }
   } else if (pl.mode === 'eva') {
-    if (vdist(pl.eva.pos, sh.pos) < 15) prompt = '[J]/[F] BOARD SHIP';
-    else prompt = 'EVA · WASD+RF jets · SPACE fire · [J] board when close';
+    if (vdist(pl.eva.pos, sh.pos) < 15) prompt = '[J]/[E] BOARD SHIP';
+    else {
+      const np = nearestPort(Gp, pl.eva.pos);
+      if (np && np.d < 20) prompt = '[E] AIRLOCK DOCK — MATCH < 8 m/s';
+      else if (np && np.d < 260) prompt = `AIRLOCK ${np.d.toFixed(0)} m — DRIFT TO THE @ MARKER · [J] BOARD SHIP`;
+      else prompt = 'EVA · WASD+RF jets · SPACE fire · [J] board when close';
+    }
   } else if (pl.mode === 'walk') {
-    if ((sh.landedOn || sh.anchoredTo) && vdist(pl.foot.pos, sh.pos) < 12) prompt = '[F] BOARD SHIP';
+    if ((sh.landedOn || sh.anchoredTo) && vdist(pl.foot.pos, sh.pos) < 12) prompt = '[E] BOARD SHIP';
     else {
       const surf = findSurface(Gp.world, pl.foot.pos);
-      if (surf && surf.body.kind === 'asteroid' && surf.body.cave && vdist(pl.foot.pos, caveEntrance(surf.body)) < 6) prompt = `[F] ENTER CAVERN — ${surf.body.name}`;
-      else if (surf && surf.body.kind === 'derelict' && surf.gap < 4) prompt = `[F] BOARD WRECK — ${surf.body.name}`;
+      if (surf && surf.body.kind === 'asteroid' && surf.body.cave && vdist(pl.foot.pos, caveEntrance(surf.body)) < 6) prompt = `[E] ENTER CAVERN — ${surf.body.name}`;
+      else if (surf && surf.body.kind === 'derelict' && surf.gap < 4) prompt = `[E] BOARD WRECK — ${surf.body.name}`;
       else prompt = '[M] MAG BOOTS · SPACE jump · [J] EVA';
     }
   } else if (pl.mode === 'interior') {
     const it = pl.interior;
     const ch = charAt(it.map, it.pos.x, it.pos.y);
-    if (ch === 'A') prompt = '[F] AIRLOCK — EVA OUT';
+    if (ch === 'A') prompt = '[E] AIRLOCK — EVA OUT';
   }
   Gp.prompt = prompt;
 }

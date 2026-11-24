@@ -202,7 +202,12 @@ export function buildWorld(seedStr) {
       rotRate: def.rotRate * DEG,
       rotAngle: 0,
       mesh, portsLocal: mesh.ports,
+      padsLocal: mesh.ports.map((lp) => {
+        const dl = Math.max(1e-6, Math.hypot(lp.x, lp.y, lp.z));
+        return v3((lp.x / dl) * def.size * 1.02, (lp.y / dl) * def.size * 1.02, (lp.z / dl) * def.size * 1.02);
+      }),
       ports: [], // filled each tick: {pos, dir}
+      pads: [],  // filled each tick: {pos, normal}
       hull: 100,
       interiorId: 'st_' + def.id,
       marketSeed: srng.int(1, 1e9),
@@ -338,6 +343,10 @@ export function buildWorld(seedStr) {
         o.ports = o.portsLocal.map((lp) => {
           const wp = qrot(o.quat, lp);
           return { pos: vadd(wp, o.pos), dir: vnorm(wp) };
+        });
+        o.pads = o.padsLocal.map((lp) => {
+          const wp = qrot(o.quat, lp);
+          return { pos: vadd(wp, o.pos), normal: vnorm(wp) };
         });
       }
     }
