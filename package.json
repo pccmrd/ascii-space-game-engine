@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "serve": "python3 -m http.server 8000",
-    "test": "node test/sim-test.mjs && node test/render-test.mjs"
+    "test": "node test/sim-test.mjs && node test/controls-test.mjs && node test/render-test.mjs",
+    "test:sim": "node test/sim-test.mjs",
+    "test:controls": "node test/controls-test.mjs",
+    "test:render": "node test/render-test.mjs",
+    "frames": "node test/frame-dump.mjs"
   },
   "license": "MIT"
 }

@@ -31,13 +31,15 @@ drone patrols. Derelicts hide crates and tech. Some big rocks have caves.
 
 | Context | Keys |
 | --- | --- |
-| Flight | `W/S` main/retro · `R/F` vertical · `A/D` lateral · arrows pitch/yaw · `Q/E` roll · `SHIFT` boost |
+| Flight | `W/S` main/retro · `R/F` vertical · `A/D` lateral · arrows pitch/yaw · `,`/`.` roll · `SHIFT` boost |
 | Flight systems | `X` brake · `G` flight-assist on/off (Newtonian drift) · `L` landing gear · `T` autopilot 180° flip |
 | Combat / tools | `SPACE`/click lasers · `TAB` target · `V` (hold) scan · `C` mining beam |
-| Docking | approach a blinking port `< 26 m` at `< 5 m/s` relative → `F` dock · `U` undock |
+| Docking | approach a blinking `@ DOCK n` port `< 26 m` at `< 5 m/s` relative → `E` dock · `U` undock. Amber `H PAD n` rings beside each port are landable discs: gear down (`L`), descend at `< 8 m/s`, touch down → landed-on-pad. On EVA you can also drift into a dock collar (< 20 m, < 8 m/s) and press `E` to cycle the airlock in on foot (ship stays outside) |
+| Approach guide | Top-centre readout shows nearest station, range to closest dock (`D`) and pad (`P`), and relative speed; it turns green with `DOCK READY [E]` when you are in the envelope |
 | Anchoring | near a rock's surface → `K` mag-anchor (rides the spin) · `K` again release |
 | EVA / surface | `J` exit/board ship · `WASD+RF` jets · `M` magnetic boots · `SPACE` jump |
-| Interiors | `F` airlock / terminal / loot · walk with `WASD` |
+| Interact / use | `E` — dock · enter station/airlock · loot · terminals · exit on foot |
+| Interiors | `E` airlock / terminal / loot · walk with `WASD` |
 | View / time | `Z` isometric↔top-down · `+/−` zoom · `1/2/3` time ×0.25/×1/×4 |
 | System | `H` manual · `ESC/P` pause · `N` mute · `U` save · `B` rescue tug (fuel < 5%) |
 

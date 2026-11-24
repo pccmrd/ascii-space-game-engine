@@ -13,10 +13,11 @@ globalThis.localStorage = {
 const { G, SAVE_KEY } = await import('../js/state.js');
 const { buildWorld } = await import('../js/world.js');
 const game = await import('../js/game.js');
-const { createPlayer, exitShipToWalk, charAt, surfaceVelocity } = await import('../js/player.js');
+const { createPlayer, exitShipToWalk, charAt, surfaceVelocity, referenceBody } = await import('../js/player.js');
+const physics = await import('../js/physics.js');
 const interiors = await import('../js/interiors.js');
 const npc = await import('../js/npc.js');
-const { vdist, vsub, vlen, vnorm } = await import('../js/core.js');
+const { vdist, vsub, vlen, vnorm, vadd, vscale, qident, qforward } = await import('../js/core.js');
 
 // ---------- fakes ----------
 const noopAudio = new Proxy({}, { get: () => () => {} });
@@ -35,8 +36,10 @@ function mkInput() {
 
 let passed = 0;
 function ok(name, fn) {
+  G.input.keys.clear(); G.input.pressed.clear(); // no key bleed between checks
   try { fn(); passed++; console.log('  PASS', name); }
   catch (e) { console.error('  FAIL', name, '::', e.message); process.exitCode = 1; }
+  G.input.keys.clear(); G.input.pressed.clear();
 }
 
 // ---------- setup ----------
@@ -199,12 +202,52 @@ ok('dock when close & slow, enter station, EVA out airlock', () => {
 ok('walk on hull sticks with mag boots', () => {
   G.settings.dampeners = true;
   step(300);
-  const surfBody = G.player.foot.body;
-  const d = Math.hypot(
-    G.player.foot.pos.x - surfBody.pos.x,
-    G.player.foot.pos.y - surfBody.pos.y,
-    G.player.foot.pos.z - surfBody.pos.z);
-  assert.ok(Math.abs(d - surfBody.size * 0.85) < 8, `sticks to hull, gap=${(d - surfBody.size * 0.85).toFixed(2)}`);
+  const ft = G.player.foot;
+  assert.ok(ft.attached, 'boots attached');
+  const surf = physics.findSurface(G.world, ft.pos);
+  assert.ok(surf && surf.gap < 6, `sticks near surface, gap=${surf ? surf.gap.toFixed(2) : 'none'}`);
+});
+ok('EVA can airlock-dock into a station on foot', () => {
+  const st = G.world.stations.find(s => s.id === 'hregg');
+  const port = st.ports[0];
+  G.player.mode = 'eva';
+  G.player.interior = null;
+  sh().landedOn = null; sh().anchoredTo = null; sh().dockedTo = null;
+  sh().pos = { x: port.pos.x + 400, y: port.pos.y + 400, z: port.pos.z + 400 }; // ship safely elsewhere
+  G.player.eva.pos = { x: port.pos.x + 4, y: port.pos.y, z: port.pos.z };
+  G.player.eva.vel = surfaceVelocity(st, G.player.eva.pos);
+  game.interact(G);
+  assert.equal(G.player.mode, 'interior', 'cycled in');
+  assert.equal(G.player.interior.map.stationId, 'hregg', 'inside Hregg');
+  assert.ok(!sh().dockedTo, 'ship left outside');
+});
+
+console.log('— station pads & hull safety —');
+ok('landing pad touchdown works with gear down', () => {
+  const st = G.world.stations.find(s => s.id === 'hregg');
+  const pad = st.pads[0];
+  G.player.mode = 'ship'; G.player.interior = null;
+  sh().pos = { x: pad.pos.x + pad.normal.x * 4.5, y: pad.pos.y + pad.normal.y * 4.5, z: pad.pos.z + pad.normal.z * 4.5 };
+  sh().vel = vadd(surfaceVelocity(st, sh().pos), vscale(pad.normal, -1.5));
+  sh().quat = qident(); sh().gearDown = true; sh().dockedTo = null; sh().landedOn = null; sh().anchoredTo = null;
+  step(120);
+  assert.ok(sh().landedOn && sh().landedOn.id === 'hregg', `landed on hregg (got ${sh().landedOn ? sh().landedOn.id : 'nothing'})`);
+  assert.ok(sh().landedPad, 'registered as a pad landing');
+  // lift off again
+  sh().gearDown = false; G.input.press('KeyR'); step(60);
+  assert.ok(!sh().landedOn, 'lifted off from pad');
+});
+ok('flying over a station does not destroy the ship', () => {
+  const st = G.world.stations.find(s => s.id === 'hregg');
+  const hull = st.size * 0.55;
+  G.player.mode = 'ship';
+  sh().pos = { x: st.pos.x, y: st.pos.y, z: st.pos.z + hull + 3 }; // skimming the hull
+  sh().vel = { x: st.vel.x + 40, y: st.vel.y, z: st.vel.z };      // grazing pass
+  sh().gearDown = false; sh().landedOn = null; sh().dockedTo = null;
+  const hull0 = sh().hull;
+  step(120);
+  assert.ok(sh().hull > 0 && sh().alive !== false, 'still flying');
+  assert.ok(hull0 - sh().hull <= 12.01, `hull damage capped (${(hull0 - sh().hull).toFixed(1)})`);
 });
 
 console.log('— anchoring —');
@@ -276,6 +319,7 @@ ok('EVA exit and re-board cycle', () => {
 ok('landing on moon then exiting on foot works', () => {
   sh().pos = { x: 610, y: 0, z: 0 }; sh().vel = { x: -1, y: 0, z: 0 };
   sh().gearDown = true; sh().dockedTo = null; sh().anchoredTo = null; sh().landedOn = null;
+  sh().hull = sh().maxHull; sh().shield = sh().maxShield;
   G.settings.dampeners = true;
   step(600);
   assert.ok(sh().landedOn === G.world.moon, 'landed');
@@ -317,7 +361,7 @@ ok('market sell earns credits', () => {
   const c0 = G.player.ship.credits;
   const term = map.terminals.find(t => t.kind === 'market');
   G.player.interior.pos = { x: term.x + 0.5, y: term.y + 0.5 };
-  G.input.pressed.add('KeyF');
+  G.input.pressed.add('KeyE');
   step(1);
   assert.equal(G.uiMode, 'market', 'market opened');
   G.input.pressed.add('Digit1');
@@ -336,7 +380,7 @@ ok('enter cave and exit back to surface', () => {
   // stand exactly at the entrance
   const ent = game.caveEntrance(ast);
   G.player.foot.pos = { x: ent.x, y: ent.y, z: ent.z };
-  G.input.pressed.add('KeyF');
+  G.input.pressed.add('KeyE');
   step(1);
   const entered = G.player.mode === 'interior';
   assert.ok(entered, 'cave interior entered');
@@ -345,7 +389,7 @@ ok('enter cave and exit back to surface', () => {
   // walk to airlock tile and exit
   const al = map.airlocks[0];
   G.player.interior.pos = { x: al.x + 0.5, y: al.y + 0.5 };
-  G.input.pressed.add('KeyF');
+  G.input.pressed.add('KeyE');
   step(1);
   assert.equal(G.player.mode, 'walk', 'back outside');
   G.player.ship.landedOn = null;
@@ -355,7 +399,7 @@ ok('derelict boarding and crate loot', () => {
   G.player.mode = 'walk';
   G.player.foot.pos = { x: der.pos.x + der.radius + 0.8, y: der.pos.y, z: der.pos.z };
   G.player.foot.up = { x: 1, y: 0, z: 0 };
-  G.input.pressed.add('KeyF');
+  G.input.pressed.add('KeyE');
   step(1);
   assert.equal(G.player.mode, 'interior', 'boarded wreck');
   const map = G.player.interior.map;
@@ -363,13 +407,13 @@ ok('derelict boarding and crate loot', () => {
   if (crate) {
     const c0 = G.player.ship.credits;
     G.player.interior.pos = { x: crate.x + 0.5, y: crate.y + 0.5 };
-    G.input.pressed.add('KeyF');
+    G.input.pressed.add('KeyE');
     step(1);
     assert.ok(crate.looted && G.player.ship.credits > c0, 'looted');
   }
   const al = map.airlocks[0];
   G.player.interior.pos = { x: al.x + 0.5, y: al.y + 0.5 };
-  G.input.pressed.add('KeyF');
+  G.input.pressed.add('KeyE');
   step(1);
   assert.equal(G.player.mode, 'walk');
 });

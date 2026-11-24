@@ -38,7 +38,7 @@ export function findSurface(world, p) {
     const d = vdist(p, body.pos);
     const gap = d - radius;
     if (!best || gap < best.gap) {
-      best = { body, gap, normal: vnorm(vsub(p, body.pos)), dist: d, radius, isStructure };
+      best = { body, gap, normal: vnorm(vsub(p, body.pos)), dist: d, radius, isStructure, center: body.pos };
     }
   };
   consider(world.moon, world.moon.radius, false);
@@ -50,7 +50,17 @@ export function findSurface(world, p) {
   }
   for (const s of world.stations) {
     const approx = vdist(p, s.pos);
-    if (approx - s.size * 1.2 < 60) consider(s, s.size * 0.85, true);
+    if (approx - s.size * 1.2 < 60) consider(s, s.size * 0.55, true);
+    // docking pads float outside the hull sphere — landable
+    for (const pad of (s.pads || [])) {
+      const dp = vdist(p, pad.pos);
+      if (dp - 8 < 60) {
+        const gap = dp - 6;
+        if (!best || gap < best.gap) {
+          best = { body: s, gap, normal: pad.normal, dist: dp, radius: 6, isStructure: true, pad: true, center: pad.pos };
+        }
+      }
+    }
   }
   for (const d of world.derelicts) {
     const approx = vdist(p, d.pos);

@@ -431,13 +431,47 @@ export class Renderer {
     for (const p of pts) if (dim) this.put(p.cx, p.cy, '.', st.color);
     // nodes
     if (!dim) for (const p of pts) this.put(p.cx, p.cy, '@', '#e8f1fb');
-    // ports: blinking markers
+    // landing pads: always-visible amber rings outside the hull
+    const ppos = Gp.player.mode === 'ship' ? Gp.player.ship.pos : Gp.player.mode === 'eva' ? Gp.player.eva.pos : Gp.player.foot.pos;
+    for (let i = 0; i < (st.pads || []).length; i++) {
+      const pad = st.pads[i];
+      const pd = vdist(pad.pos, ppos || cam);
+      const pp = this.project(pad.pos, cam);
+      if (!pp) continue;
+      const n = pad.normal;
+      let t1 = vnorm(vcross(n, v3(0, 0, 1)));
+      if (vlen(t1) < 1e-3) t1 = v3(1, 0, 0);
+      const t2 = vnorm(vcross(n, t1));
+      const pr6 = 6;
+      const ringCol = pd < 120 ? PAL.ore : '#7a6a3a';
+      for (let k = 0; k < 10; k++) {
+        const a0 = (k / 10) * TAU, a1 = ((k + 1) / 10) * TAU;
+        const rp = (a) => this.project(vadd(pad.pos, vadd(vscale(t1, Math.cos(a) * pr6), vscale(t2, Math.sin(a) * pr6))), cam);
+        const p0 = rp(a0), p1 = rp(a1);
+        if (p0 && p1) this.line(p0.cx, p0.cy, p1.cx, p1.cy, k % 2 ? '+' : '=', ringCol);
+      }
+      this.put(pp.cx, pp.cy, 'H', ringCol);
+      if (pd < 900) this.text(pp.cx - 4, pp.cy + 8, `PAD ${i + 1}`, ringCol);
+    }
+    // ports: bright blinking dock markers with brackets
     for (let i = 0; i < st.ports.length; i++) {
       const port = st.ports[i];
+      const pd = vdist(port.pos, ppos || cam);
       const pp = this.project(port.pos, cam);
       if (!pp) continue;
       const blink = Math.sin(this.time * 4 + i * 2) > 0;
-      this.put(pp.cx, pp.cy, blink ? '◊' : 'x', blink ? PAL.good : '#5a7a5a');
+      const col = blink ? PAL.good : '#4a7a5a';
+      this.put(pp.cx, pp.cy, '@', col);
+      if (pd < 250) {
+        const puls = Math.sin(this.time * 5) > 0;
+        if (puls) {
+          this.put(pp.cx - 2, pp.cy - 1, '<', col);
+          this.put(pp.cx + 2, pp.cy - 1, '>', col);
+          this.put(pp.cx - 2, pp.cy + 1, '<', col);
+          this.put(pp.cx + 2, pp.cy + 1, '>', col);
+        }
+        this.text(pp.cx - 4, pp.cy - 2, `DOCK ${i + 1}`, col);
+      }
       // docking approach corridor hint
       if (Gp.target && Gp.target.kind === 'station' && Gp.target.id === st.id) {
         const sp = this.project(Gp.player.ship.pos, cam);

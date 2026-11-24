@@ -34,14 +34,28 @@ export function createPlayer() {
 // velocity of the exact surface point of a spinning body
 export function surfaceVelocity(body, p) {
   const sv = body.vel ? { ...body.vel } : v3();
-  if (body.spinRate && body.spinAxis) {
+  const w = body.spinAxis || body.rotAxis, wr = body.spinRate !== undefined ? body.spinRate : body.rotRate;
+  if (w && wr) {
     const rx = p.x - body.pos.x, ry = p.y - body.pos.y, rz = p.z - body.pos.z;
-    const w = body.spinAxis, wr = body.spinRate;
     sv.x += (w.y * rz - w.z * ry) * wr;
     sv.y += (w.z * rx - w.x * rz) * wr;
     sv.z += (w.x * ry - w.y * rx) * wr;
   }
   return sv;
+}
+
+// nearest body worth holding station against (dampeners reference frame)
+export function referenceBody(world, p) {
+  let best = null;
+  const consider = (b, r) => {
+    const d = vdist(p, b.pos) - r;
+    if (d < 900 && (!best || d < best.d)) best = { b, d };
+  };
+  consider(world.moon, world.moon.radius);
+  if (world.planet) consider(world.planet, world.planet.radius);
+  for (const st of world.stations) consider(st, st.size);
+  for (const a of world.asteroids) consider(a, a.radius);
+  return best ? best.b : null;
 }
 
 // ---------------------------------------------------------------- SHIP
@@ -76,23 +90,26 @@ export function updateShip(Gp, dt) {
     return;
   }
 
-  // --- landed: sitting on a surface ---
+  // --- landed: sitting on a surface (hull, moon, rock or station pad) ---
   if (sh.landedOn) {
     const b = sh.landedOn;
-    const n = vnorm(vsub(sh.pos, b.pos));
-    // re-seat exactly on surface
-    sh.pos = vadd(b.pos, vscale(n, b.radius + 0.6));
+    let n;
+    if (sh.landedPad) {
+      n = sh._landN;                       // stay glued to the pad disc
+    } else {
+      n = vnorm(vsub(sh.pos, b.pos));
+      sh.pos = vadd(b.pos, vscale(n, b.radius + 0.6));   // re-seat on the sphere
+    }
     sh.vel = surfaceVelocity(b, sh.pos);
     sh.rates = v3();
     // gentle align of ship up to normal
-    const curUp = qup(sh.quat);
     const targetQ = quatFromUp(n, sh.quat);
     sh.quat = qslerp(sh.quat, targetQ, 1 - Math.pow(0.001, dt));
     sh.thrustVis = v3();
     const thr = shipThrustInput(Gp);
     if (thr.y > 0 && !sh.gearDown) {
       // liftoff
-      sh.landedOn = null; sh.landedName = '';
+      sh.landedOn = null; sh.landedName = ''; sh.landedPad = false;
       sh.vel = vadd(sh.vel, vscale(n, 2.5));
       Gp.audio.jump();
     }
@@ -111,9 +128,12 @@ export function updateShip(Gp, dt) {
   thrustAcc = vadd(thrustAcc, vscale(right, -thr.z));
 
   const dampeners = Gp.settings.dampeners;
+  // dampeners hold station against the local body, not the fixed stars
+  const refB = referenceBody(Gp.world, sh.pos);
+  const rv = refB ? vsub(sh.vel, surfaceVelocity(refB, sh.pos)) : sh.vel;
   if (dampeners) {
     // counter-thrust on axes with no input
-    const lv = vdot(sh.vel, fwd), lu = vdot(sh.vel, up), lr = vdot(sh.vel, right);
+    const lv = vdot(rv, fwd), lu = vdot(rv, up), lr = vdot(rv, right);
     const cap = 4;
     // deadband: assist won't fight slow drift / landing approaches
     if (Math.abs(thr.x) < 0.01 && Math.abs(lv) > 2.5) thrustAcc = vadd(thrustAcc, vscale(fwd, clamp(-lv / Math.max(dt, 1e-4) * 0.5, -cap, cap)));
@@ -122,7 +142,7 @@ export function updateShip(Gp, dt) {
   }
   // brake key X: heavy damping
   if (inp.down('KeyX')) {
-    const dv = vscale(sh.vel, clamp(1.6 / Math.max(dt, 1e-4) * dt, 0, 6));
+    const dv = vscale(rv, clamp(1.6 / Math.max(dt, 1e-4) * dt, 0, 6));
     sh.vel = vsub(sh.vel, dv);
   }
 
@@ -139,7 +159,7 @@ export function updateShip(Gp, dt) {
 
   // attitude
   const rateTarget = v3(
-    (inp.down('KeyE') ? -1 : 0) + (inp.down('KeyQ') ? 1 : 0),
+    (inp.down('Period') ? -1 : 0) + (inp.down('Comma') ? 1 : 0),
     (inp.down('ArrowLeft') ? 1 : 0) + (inp.down('ArrowRight') ? -1 : 0),
     (inp.down('ArrowUp') ? 1 : 0) + (inp.down('ArrowDown') ? -1 : 0)   // ArrowUp = nose up
   );
@@ -176,15 +196,19 @@ export function updateShip(Gp, dt) {
       if ((sh.gearDown || closing < 3.5) && impactSpeed < 8) {
         // LAND
         sh.landedOn = surf.body;
+        sh.landedPad = !!surf.pad;
+        sh._landN = { ...surf.normal };
         sh.landedName = surf.body.name || surf.body.id || 'SURFACE';
-        sh.pos = vadd(surf.body.pos, vscale(surf.normal, surf.radius + 0.6));
+        if (!surf.pad) sh.pos = vadd(surf.body.pos, vscale(surf.normal, surf.radius + 0.6));
+        else sh.landedName += ' — PAD';
         sh.vel = sv;
         Gp.audio.land();
         burst(Gp, sh.pos, 10, '#aab', { speed: 3, life: 0.5 });
         Gp.hud && Gp.hud.log(`TOUCHDOWN — ${sh.landedName}`, '#b7ff7a');
       } else {
-        // crash bounce
-        const dmg = Math.max(0, (impactSpeed - 3) * 7);
+        // crash bounce (station hulls are forgiving, everything else hurts)
+        let dmg = Math.max(0, (impactSpeed - 3) * 7);
+        if (surf.body.kind === 'station') dmg = Math.min(dmg * 0.25, 12);
         sh.hull = Math.max(0, sh.hull - dmg);
         const vn = vscale(surf.normal, vdot(relV, surf.normal));
         const vt = vsub(relV, vn);
@@ -443,11 +467,18 @@ function quatFromUpSafe(up, refQ) { try { return quatFromUp(up, refQ); } catch (
 export function exitShipToWalk(Gp) {
   const pl = Gp.player;
   pl.mode = 'walk';
-  pl.foot.pos = vadd(pl.ship.pos, vscale(vnorm(vsub(pl.ship.pos, pl.ship.landedOn.pos)), 2.2));
-  pl.foot.vel = v3();
-  const n = vnorm(vsub(pl.foot.pos, pl.ship.landedOn.pos));
-  pl.foot.up = n;
+  let raw = vadd(pl.ship.pos, vscale(vnorm(vsub(pl.ship.pos, pl.ship.landedOn.pos)), 1.6));
+  const surf = findSurface(Gp.world, raw);
+  let fp = raw, up = vnorm(vsub(raw, pl.ship.landedOn.pos)), body = pl.ship.landedOn;
+  if (surf) {
+    fp = vadd(surf.center || surf.body.pos, vscale(surf.normal, (surf.pad ? 6 : surf.radius) + 0.8));
+    up = surf.normal; body = surf.body;
+  }
+  pl.foot.pos = fp;
+  pl.foot.vel = surfaceVelocity(body, fp);
+  pl.foot.up = up;
   pl.foot.attached = true;
+  pl.foot.body = body;
   pl.foot.magboots = true;
   Gp.hud && Gp.hud.log('MAG BOOTS ENGAGED — pressure nominal', '#b7ff7a');
 }

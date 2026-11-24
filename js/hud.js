@@ -2,7 +2,7 @@
 
 import { clamp, lerp, bar, fmtInt, pad2 } from './core.js';
 import { PAL } from './renderer.js';
-import { charAt } from './player.js';
+import { charAt, surfaceVelocity } from './player.js';
 
 const BOX = {
   tl: '┌', tr: '┐', bl: '└', br: '┘', h: '─', v: '│',
@@ -65,6 +65,9 @@ export class Hud {
       r.text(cols / 2 - e.text.length / 2, y, e.text, fadeCol);
     }
 
+    // ---------- station approach guide ----------
+    this.drawGuide(Gp, r);
+
     // ---------- prompts ----------
     if (Gp.uiMode === 'play' && Gp.prompt) {
       const p = Gp.prompt;
@@ -80,6 +83,38 @@ export class Hud {
         r.text(cols / 2 - 22, 2, '! HOSTILE CONTACT — BELT SYNDICATE ACTIVE !', PAL.bad);
       }
     }
+  }
+
+  drawGuide(Gp, r) {
+    if (Gp.player.mode !== 'ship') return;
+    const sh = Gp.player.ship;
+    if (sh.dockedTo || sh.landedOn || sh.anchoredTo) return;
+    let best = null;
+    for (const st of Gp.world.stations) {
+      const d = Math.hypot(sh.pos.x - st.pos.x, sh.pos.y - st.pos.y, sh.pos.z - st.pos.z);
+      if (d < 2400 && (!best || d < best.d)) best = { st, d };
+    }
+    if (!best) return;
+    const st = best.st;
+    let pd = 1e9, pi = 0;
+    for (let i = 0; i < st.pads.length; i++) {
+      const d = Math.hypot(sh.pos.x - st.pads[i].pos.x, sh.pos.y - st.pads[i].pos.y, sh.pos.z - st.pads[i].pos.z);
+      if (d < pd) { pd = d; pi = i; }
+    }
+    let nd = 1e9, ni = 0;
+    for (let i = 0; i < st.ports.length; i++) {
+      const d = Math.hypot(sh.pos.x - st.ports[i].pos.x, sh.pos.y - st.ports[i].pos.y, sh.pos.z - st.ports[i].pos.z);
+      if (d < nd) { nd = d; ni = i; }
+    }
+    const rel = Math.hypot(
+      sh.vel.x - surfaceVelocity(st, sh.pos).x,
+      sh.vel.y - surfaceVelocity(st, sh.pos).y,
+      sh.vel.z - surfaceVelocity(st, sh.pos).z
+    );
+    const ready = nd < 26 && rel < 5;
+    const fmt = (d) => (d < 999 ? d.toFixed(0) : '—');
+    const txt = `${st.name} · D${ni + 1} ${fmt(nd)}m · P${pi + 1} ${fmt(pd)}m · REL ${rel.toFixed(1)}${ready ? ' · DOCK READY [E]' : ''}`;
+    r.text(Math.max(1, Math.floor(r.cols / 2 - txt.length / 2)), 0, txt, ready ? PAL.good : PAL.info);
   }
 
   locationName(Gp) {
@@ -121,11 +156,11 @@ export class Hud {
       r.text(x + 2, y + 2, `BODY  ${(pl.foot.body && (pl.foot.body.name || pl.foot.body.kind)) || 'DRIFT'}`, '#cfd8ea');
       r.text(x + 2, y + 3, `MAG   ${pl.foot.magboots ? 'ENGAGED [M]' : 'OFF [M]'}`, pl.foot.magboots ? PAL.info : PAL.ore);
       r.text(x + 2, y + 4, `GRAV  ${(pl.foot.body && pl.foot.body.mu ? (pl.foot.body.mu / Math.max(100, (() => { const d = Math.hypot(pl.foot.pos.x - pl.foot.body.pos.x, pl.foot.pos.y - pl.foot.body.pos.y, pl.foot.pos.z - pl.foot.body.pos.z); return d * d; })())) : 0).toFixed(2)} m/s²`, '#9fb4c7');
-      r.text(x + 2, y + 5, `SHIP: [J] EVA   [F] board`, '#8a94a2');
+      r.text(x + 2, y + 5, `SHIP: [J] EVA   [E] board`, '#8a94a2');
     } else {
       r.text(x + 2, y + 1, `SUIT  ${bar(pl.ship.hull, pl.ship.maxHull, 14)} ${Math.ceil(pl.ship.hull)}`, PAL.good);
       r.text(x + 2, y + 2, `LOC   ${pl.interior.map.name}`, '#cfd8ea');
-      r.text(x + 2, y + 3, `[F] use / interact`, '#8a94a2');
+      r.text(x + 2, y + 3, `[E] use / interact`, '#8a94a2');
     }
   }
 
@@ -284,10 +319,10 @@ export class Hud {
   interiorHint(Gp) {
     const it = Gp.player.interior;
     const ch = charAt(it.map, it.pos.x, it.pos.y);
-    if (ch === 'A') return '[F] AIRLOCK — EVA OUT';
-    if (ch === 'T') return '[F] MARKET TERMINAL';
-    if (ch === 'F') return '[F] REFUEL — 2 CR / UNIT';
-    if (ch === 'R') return '[F] REPAIR — 3 CR / HULL PT';
+    if (ch === 'A') return '[E] AIRLOCK — EVA OUT';
+    if (ch === 'T') return '[E] MARKET TERMINAL';
+    if (ch === 'F') return '[E] REFUEL — 2 CR / UNIT';
+    if (ch === 'R') return '[E] REPAIR — 3 CR / HULL PT';
     return null;
   }
 
@@ -323,7 +358,7 @@ export class Hud {
     const L = [
       ['FLIGHT (SHIP)', PAL.info],
       ['  W/S  main / retro thrust      R/F  vertical thrust       A/D  lateral', '#9fb4c7'],
-      ['  ARROWS  pitch & yaw            Q/E  roll                  SHIFT boost', '#9fb4c7'],
+      ['  ARROWS  pitch & yaw            ,/.  roll                  SHIFT boost', '#9fb4c7'],
       ['  X  brake                      G  flight assist on/off (Newtonian drift)', '#9fb4c7'],
       ['  SPACE / CLICK  lasers         TAB  target · V (hold) scan · C  mining beam', '#9fb4c7'],
       ['  L  landing gear (land soft < 3.5 m/s)   K  mag-anchor   T  180° flip', '#9fb4c7'],
@@ -331,7 +366,8 @@ export class Hud {
       ['  J  exit ship / board          WASD + R/F  jet thrust     M  magnetic boots', '#9fb4c7'],
       ['  SPACE  jump (on foot)          CLICK / C  hand laser / mining tool', '#9fb4c7'],
       ['DOCKING · BOARDING · INTERIORS', PAL.info],
-      ['  F  dock at port (match velocity < 5 m/s) · enter station · loot · airlock', '#9fb4c7'],
+      ['  E  dock at @ port (<26 m, <5 m/s) · land on amber H PAD (L gear, <8 m/s)', '#9fb4c7'],
+      ['     enter station · loot · airlock      EVA: E at a collar cycles you in on foot', '#9fb4c7'],
       ['  U  undock / save game          H  this manual            ESC/P  pause', '#9fb4c7'],
       ['VIEW & TIME', PAL.info],
       ['  Z  isometric / top-down        + / −  zoom               1/2/3  time ×0.25/×1/×4', '#9fb4c7'],
@@ -400,6 +436,6 @@ export class Hud {
     if (mk.kind === 'fuel') r.text(x + 3, y + row++, `[1] REFUEL TO FULL — ${Math.ceil((100 - sh.fuel) * 2)} CR`, PAL.planetC);
     if (mk.kind === 'repair') r.text(x + 3, y + row++, `[1] REPAIR HULL — ${Math.ceil((sh.maxHull - sh.hull) * 3)} CR`, PAL.planetC);
     if (st.roles.includes('refinery') && mk.kind === 'market') r.text(x + 3, y + row++, '  (refinery bonus: +15% ore prices)', '#5a6675');
-    r.text(x + 3, y + row + 1, '[ESC] leave terminal', '#8a94a2');
+    r.text(x + 3, y + row + 1, '[E]/[ESC] leave terminal', '#8a94a2');
   }
 }
