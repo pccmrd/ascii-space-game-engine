@@ -22,7 +22,7 @@ export function createPlayer() {
     },
     eva: { pos: v3(), vel: v3(), fuel: 60, maxFuel: 60 },
     foot: {
-      pos: v3(), vel: v3(), up: v3(0, 1, 0), heading: 0,
+      pos: v3(), vel: v3(), up: v3(0, 1, 0), heading: 0, face: v3(0, 0, 1),
       body: null, magboots: true, attached: false, walkPhase: 0,
       fireCooldown: 0,
     },
@@ -141,12 +141,28 @@ export function updateShip(Gp, dt) {
   const rateTarget = v3(
     (inp.down('KeyE') ? -1 : 0) + (inp.down('KeyQ') ? 1 : 0),
     (inp.down('ArrowLeft') ? 1 : 0) + (inp.down('ArrowRight') ? -1 : 0),
-    (inp.down('ArrowUp') ? 1 : 0) + (inp.down('ArrowDown') ? -1 : 0)
+    (inp.down('ArrowUp') ? 1 : 0) + (inp.down('ArrowDown') ? -1 : 0)   // ArrowUp = nose up
   );
-  const maxRate = 1.4;
-  sh.rates.x = lerp(sh.rates.x, rateTarget.x * maxRate, 1 - Math.pow(0.002, dt));
-  sh.rates.y = lerp(sh.rates.y, rateTarget.y * maxRate, 1 - Math.pow(0.002, dt));
-  sh.rates.z = lerp(sh.rates.z, rateTarget.z * maxRate, 1 - Math.pow(0.002, dt));
+  // T: commanded 180-degree flip (autopilot)
+  if (inp.hit('KeyT') && !sh.landedOn && !sh.dockedTo && !sh.anchoredTo && !sh._flipQ) {
+    const upv = qup(sh.quat);
+    const flip = qaxis(upv.x, upv.y, upv.z, Math.PI);
+    sh._flipQ = qmul(flip, sh.quat);
+    sh._flipT = 0;
+    Gp.hud && Gp.hud.log('AUTOPILOT: 180° FLIP', '#7af2ff');
+  }
+  if (sh._flipQ) {
+    sh._flipT += dt;
+    sh.quat = qslerp(sh.quat, sh._flipQ, 1 - Math.pow(0.02, dt));
+    sh.rates = v3();
+    const dq = sh.quat, tq = sh._flipQ;
+    if (sh._flipT > 2.5 || (Math.abs(dq.w - tq.w) + Math.abs(dq.x - tq.x) + Math.abs(dq.y - tq.y) + Math.abs(dq.z - tq.z)) < 0.02) sh._flipQ = null;
+  } else {
+    const maxRate = 1.4;
+    sh.rates.x = lerp(sh.rates.x, rateTarget.x * maxRate, 1 - Math.pow(0.002, dt));
+    sh.rates.y = lerp(sh.rates.y, rateTarget.y * maxRate, 1 - Math.pow(0.002, dt));
+    sh.rates.z = lerp(sh.rates.z, rateTarget.z * maxRate, 1 - Math.pow(0.002, dt));
+  }
   sh.quat = qintegrate(sh.quat, sh.rates.x, sh.rates.y, sh.rates.z, dt);
 
   // --- surface contact / landing ---

@@ -211,6 +211,21 @@ export class Hud {
       lineStr += i === 0 ? `[${d}]` : ` ${d} `;
     }
     r.text(cx - lineStr.length / 2, y, lineStr, '#5a6675');
+    // ship nose bearing marker
+    if (Gp.player && Gp.player.mode === 'ship') {
+      const q = Gp.player.ship.quat;
+      // forward vector = q * (1,0,0)
+      const fx = 1 - 2 * (q.y * q.y + q.z * q.z);
+      const fy = 2 * (q.x * q.y + q.w * q.z);
+      const fz = 2 * (q.x * q.z - q.w * q.y);
+      let sx, sy;
+      if (Gp.cam.mode === 'iso') { sx = (fx - fy) * 0.7071; sy = (fx + fy) * 0.5 - fz; }
+      else { sx = fx; sy = fy; }
+      const sang = Math.atan2(sy, sx);
+      const idx = Math.round(((sang + Math.PI * 2) % (Math.PI * 2)) / (Math.PI / 4)) % 8;
+      const noseDirs = ['E', 'SE', 'S', 'SW', 'W', 'NW', 'N', 'NE'];
+      r.text(cx - lineStr.length / 2 + lineStr.length + 1, y, `▲${noseDirs[idx]}`, PAL.ore);
+    }
   }
 
   // ---------------- interiors ----------------
@@ -311,7 +326,7 @@ export class Hud {
       ['  ARROWS  pitch & yaw            Q/E  roll                  SHIFT boost', '#9fb4c7'],
       ['  X  brake                      G  flight assist on/off (Newtonian drift)', '#9fb4c7'],
       ['  SPACE / CLICK  lasers         TAB  target · V (hold) scan · C  mining beam', '#9fb4c7'],
-      ['  L  landing gear (land soft < 3.5 m/s)   K  mag-anchor to asteroid', '#9fb4c7'],
+      ['  L  landing gear (land soft < 3.5 m/s)   K  mag-anchor   T  180° flip', '#9fb4c7'],
       ['EVA & SURFACE', PAL.info],
       ['  J  exit ship / board          WASD + R/F  jet thrust     M  magnetic boots', '#9fb4c7'],
       ['  SPACE  jump (on foot)          CLICK / C  hand laser / mining tool', '#9fb4c7'],
