@@ -32,7 +32,7 @@ drone patrols. Derelicts hide crates and tech. Some big rocks have caves.
 | Context | Keys |
 | --- | --- |
 | Flight | `W/S` main/retro · `R/F` vertical · `A/D` lateral · arrows pitch/yaw · `Q/E` roll · `SHIFT` boost |
-| Flight systems | `X` brake · `G` flight-assist on/off (Newtonian drift) · `L` landing gear |
+| Flight systems | `X` brake · `G` flight-assist on/off (Newtonian drift) · `L` landing gear · `T` autopilot 180° flip |
 | Combat / tools | `SPACE`/click lasers · `TAB` target · `V` (hold) scan · `C` mining beam |
 | Docking | approach a blinking port `< 26 m` at `< 5 m/s` relative → `F` dock · `U` undock |
 | Anchoring | near a rock's surface → `K` mag-anchor (rides the spin) · `K` again release |

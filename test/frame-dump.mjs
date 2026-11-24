@@ -70,6 +70,17 @@ if (scene === 'orbit') {
   pl.interior = { map: interiorsMod.buildStationInterior(G.world.stations[0]), pos: { x: 18, y: 19 }, prevMode: 'ship' };
 }
 
+else if (scene === 'eva') {
+  pl.mode = 'eva';
+  pl.eva.pos = { x: 6050, y: 6050, z: 6050 };
+  pl.eva.vel = { x: 1.2, y: 0, z: 0 };
+  G.cam.mode = 'iso'; G.settings.iso = true; G.cam.zoom = 3.5;
+} else if (scene === 'shipclose') {
+  const st = G.world.stations.find(s => s.id === 'mimir');
+  sh.pos = { x: st.pos.x - 42, y: st.pos.y - 42, z: st.pos.z + 14 };
+  sh.vel = { ...st.vel };
+  G.cam.mode = 'iso'; G.settings.iso = true; G.cam.zoom = 1.6;
+}
 // settle camera (camera follow lives in drawScene)
 const r = G.renderer;
 for (let i = 0; i < 60; i++) { r.begin(); if (pl.mode === 'interior') G.hud.drawInterior(G, r, 1/60); else r.drawScene(G, 1/60); }

@@ -233,8 +233,8 @@ export class Renderer {
 
     // ---- player ----
     if (pl.mode === 'ship') this.drawShip(pl.ship, cam, Gp);
-    else if (pl.mode === 'eva') this.drawEVA(pl.eva, cam);
-    else if (pl.mode === 'walk') this.drawFoot(pl.foot, cam);
+    else if (pl.mode === 'eva') this.drawEVA(pl.eva, cam, pl);
+    else if (pl.mode === 'walk') this.drawFoot(pl.foot, cam, pl);
 
 
     // target reticle & offscreen guides
@@ -273,7 +273,7 @@ export class Renderer {
       return;
     }
     const light = vnorm(v3(0.6, -0.35, 0.72));
-    if (rCells <= 60) {
+    if (rCells <= 95) {
       this.shadeDisc(pr, rCells, light, (L, n) => {
         const maria = this.hashCell(Math.floor(pr.cx / 7), Math.floor(pr.cy / 7)) > 0.72;
         if (L < 0.12) return '#141a24';
@@ -284,7 +284,7 @@ export class Renderer {
       // enormous: paint only the lit limb band
       this.drawMoonLimb(moon, cam, pr, rCells);
     }
-    if (rCells > 6 && rCells <= 60) this.put(pr.cx, pr.cy - rCells - 1, 'KVELD', PAL.moonHi);
+    if (rCells > 6 && rCells <= 95) this.put(pr.cx, pr.cy - rCells - 1, 'KVELD', PAL.moonHi);
   }
 
   drawMoonLimb(moon, cam, pr, rCells) {
@@ -308,7 +308,7 @@ export class Renderer {
     if (!pr) return;
     const rCells = (pl.radius * pr.s) / this.cellW;
     if (rCells < 1.5) { this.put(pr.cx, pr.cy, 'O', PAL.planetC); return; }
-    const r = Math.min(rCells, 46);
+    const r = Math.min(rCells, 72);
     const light = vnorm(v3(0.6, -0.3, 0.74));
     // rings behind: draw ellipse arcs first
     if (pl.rings && rCells > 4) {
@@ -491,57 +491,148 @@ export class Renderer {
   }
 
   // ---------------- entities ----------------
+  // apparent vertical scale: cells per meter
+  vCellsPerM(cam) {
+    const S = this.baseScale(cam);
+    return (S * (cam.mode === 'iso' ? this.isoY : 1)) / this.cellH;
+  }
+  entScale(naturalMeters, vcm, minCells, maxCells) {
+    const n = naturalMeters * vcm;
+    if (n <= 1e-6) return minCells / naturalMeters;
+    return Math.min(maxCells / n, Math.max(minCells / n, 0.5));
+  }
+  // projected line between two world points, with depth shading
+  seg(a, b, ch, fg, cam, bright = '#e8f1fb') {
+    const pa = this.project(a, cam), pb = this.project(b, cam);
+    if (!pa || !pb) return;
+    const d = (pa.depth + pb.depth) / 2;
+    this.line(pa.cx, pa.cy, pb.cx, pb.cy, ch, d > 0 ? bright : fg);
+  }
+
   drawShip(sh, cam, Gp) {
     const pr = this.project(sh.pos, cam);
     if (!pr) return;
-    const fwd = qforwardLocal(sh.quat);
-    const p2 = this.project(vadd(sh.pos, vscale(fwd, 4)), cam);
-    let ang = 0;
-    if (p2) ang = Math.atan2(p2.cy - pr.cy, p2.cx - pr.cx);
-    const glyphs = [['→', 0], ['\\', 45], ['↓', 90], ['/', 135], ['←', 180], ['/', -135], ['↑', -90], ['\\', -45]];
-    // ASCII fallback: use plain chars
-    const asciiGlyphs = [['>', 0], ['\\', 45], ['v', 90], ['/', 135], ['<', 180], ['/', -135], ['^', -90], ['\\', -45]];
-    let best = asciiGlyphs[0];
-    let bestD = 999;
-    for (const g of asciiGlyphs) {
-      let dd = Math.abs(((ang * 180 / Math.PI) - g[1] + 540) % 360 - 180);
-      if (dd < bestD) { bestD = dd; best = g; }
-    }
+    const q = sh.quat;
+    const fwd = qrotLocal(q, v3(1, 0, 0));
+    const up = qrotLocal(q, v3(0, 1, 0));
+    const right = qrotLocal(q, v3(0, 0, 1));
+    const vcm = this.vCellsPerM(cam);
+    const L0 = 9, W0 = 5.5, H0 = 2.4;
+    const k = this.entScale(L0 * 2, vcm, 5, 24) * L0;
+    const L = k, W = W0 * (k / L0), H = H0 * (k / L0);
+    const P = (l, u, r) => vadd(sh.pos, vadd(vscale(fwd, l), vadd(vscale(up, u), vscale(right, r))));
+    const nose = P(L, 0, 0), tail = P(-L, 0, 0);
+    const wl = P(-0.35 * L, 0, -W), wr = P(-0.35 * L, 0, W);
+    const finT = P(-L, H * 0.9, 0), finB = P(-0.7 * L, -H * 0.7, 0);
     const flash = Gp.player.hullFlash > 0 && Math.sin(this.time * 30) > 0;
-    this.put(pr.cx, pr.cy, best[0], flash ? PAL.bad : PAL.ship);
+    const hull = flash ? PAL.bad : PAL.ship;
+    // airframe
+    this.seg(nose, wl, '#', hull, cam);
+    this.seg(nose, wr, '#', hull, cam);
+    this.seg(wl, tail, ':', hull, cam, '#7fae6a');
+    this.seg(wr, tail, ':', hull, cam, '#7fae6a');
+    this.seg(tail, P(0.2 * L, 0, 0), ':', hull, cam, '#7fae6a');   // spine
+    this.seg(tail, finT, ':', hull, cam, '#7fae6a');
+    this.seg(tail, finB, ':', hull, cam, '#7fae6a');
+    this.seg(finT, P(-0.55 * L, H * 0.5, 0), ':', hull, cam, '#7fae6a');
+    this.seg(P(0.25 * L, 0.8, 0), P(-0.4 * L, 0.8, 0), '=', hull, cam, '#7fae6a');
+    // canopy + nose probe
+    this.put(...this.px(P(0.55 * L, H * 0.35, 0), cam), 'o', '#cfeeff');
+    this.put(...this.px(P(L * 1.02, 0, 0), cam), 'v', hull);
+    // landing skids
+    if (sh.gearDown || sh.landedOn) {
+      this.seg(P(-0.55 * L, -H * 0.8, W * 0.6), P(0.45 * L, -H * 0.8, W * 0.6), 'H', '#8a94a2', cam, '#c7d0dc');
+      this.seg(P(-0.55 * L, -H * 0.8, -W * 0.6), P(0.45 * L, -H * 0.8, -W * 0.6), 'H', '#8a94a2', cam, '#c7d0dc');
+      this.seg(P(-0.3 * L, -H * 0.4, W * 0.6), P(-0.3 * L, -H * 1.1, W * 0.6), '|', '#8a94a2', cam, '#c7d0dc');
+      this.seg(P(0.2 * L, -H * 0.4, -W * 0.6), P(0.2 * L, -H * 1.1, -W * 0.6), '|', '#8a94a2', cam, '#c7d0dc');
+    }
     // engine flare
     const tv = sh.thrustVis;
     if (vlen(tv) > 0.5) {
-      const back = this.project(vadd(sh.pos, vscale(fwd, -3)), cam);
-      if (back) this.put(back.cx, back.cy, Math.sin(this.time * 40) > 0 ? '*' : '+', '#ffb36a');
+      const fl = P(-L * 1.05, 0, 0);
+      const ch = Math.sin(this.time * 40) > 0 ? '*' : '+';
+      this.put(...this.px(fl, cam), ch, '#ffb36a');
+      this.put(...this.px(P(-L * 1.25, 0, 0), cam), '.', '#ff7a3c');
     }
-    if (sh.gearDown) this.put(pr.cx, pr.cy + 1, 'H', '#8a94a2');
-    if (sh.anchoredTo) this.put(pr.cx + 1, pr.cy, 'K', PAL.info);
-    if (sh.dockedTo) this.put(pr.cx + 1, pr.cy, 'D', PAL.good);
+    if (sh.anchoredTo) this.put(pr.cx + Math.max(2, L * 0.7), pr.cy - 1, 'K', PAL.info);
+    if (sh.dockedTo) this.put(pr.cx + Math.max(2, L * 0.7), pr.cy - 1, 'D', PAL.good);
+  }
+  px(worldPt, cam) { const p = this.project(worldPt, cam); return [p ? p.cx : 0, p ? p.cy : 0]; }
+
+  // taikonaut: helmet, torso, limbs, backpack fuel/engine module
+  drawAstro(pos, upVec, faceVec, cam, opts = {}) {
+    const up = vnorm(upVec);
+    let fwd = vnorm(vsub(faceVec, vscale(up, vdot(faceVec, up))));
+    if (vlen(fwd) < 1e-4) fwd = vnorm(vcross(up, v3(0, 1, 0)));
+    const right = vnorm(vcross(up, fwd));
+    const vcm = this.vCellsPerM(cam);
+    const k = this.entScale(1.9, vcm, 4.5, 13);
+    const P = (u, r, f) => vadd(pos, vadd(vscale(up, u * k), vadd(vscale(right, r * k), vscale(fwd, f * k))));
+    const suit = opts.suit || '#e8ecf2';
+    const pack = opts.pack || '#9aa7b4';
+    // limbs & torso
+    this.seg(P(0.75, 0, 0), P(0.45, 0.55, 0.05), '/', suit, cam);   // arm L
+    this.seg(P(0.75, 0, 0), P(0.45, -0.55, 0.05), '\\', suit, cam); // arm R
+    this.seg(P(0.8, 0, 0), P(-0.1, 0, 0), '#', suit, cam);         // torso
+    this.seg(P(-0.1, 0.12, 0), P(-0.8, 0.22, 0.05), '/', suit, cam); // leg L
+    this.seg(P(-0.1, -0.12, 0), P(-0.8, -0.22, 0.05), '\\', suit, cam); // leg R
+    // chest light
+    this.put(...this.px(P(0.62, 0.18, 0.28), cam), '*', opts.chest || '#ffb36a');
+    // backpack fuel/engine module behind torso
+    this.seg(P(0.7, 0.22, -0.22), P(-0.05, 0.22, -0.22), '=', pack, cam, '#c7d0dc');
+    this.seg(P(0.7, -0.22, -0.22), P(-0.05, -0.22, -0.22), '=', pack, cam, '#c7d0dc');
+    this.seg(P(0.7, 0.22, -0.22), P(0.7, -0.22, -0.22), '|', pack, cam, '#c7d0dc');
+    this.seg(P(-0.05, 0.22, -0.22), P(-0.05, -0.22, -0.22), '|', pack, cam, '#c7d0dc');
+    // tank + nozzle
+    this.put(...this.px(P(0.45, 0, -0.3), cam), 'O', opts.tank || '#7af2ff');
+    if (opts.jet) {
+      this.put(...this.px(P(0.3, 0, -0.42), cam), '*', '#ffb36a');
+      this.put(...this.px(P(0.55, 0, -0.42), cam), '*', '#ff7a3c');
+    }
+    // helmet + visor
+    this.put(...this.px(P(0.98, 0, 0), cam), '@', suit);
+    this.put(...this.px(P(0.9, 0, 0.3), cam), '*', '#7af2ff');
   }
 
-  drawEVA(ev, cam) {
+  drawEVA(ev, cam, pl) {
     const pr = this.project(ev.pos, cam);
     if (!pr) return;
-    this.put(pr.cx, pr.cy, '@', PAL.eva);
-    const p2 = this.project(vadd(ev.pos, v3(0, 1, 0)), cam);
-    if (p2) this.put(lerp(pr.cx, p2.cx, 0.6), lerp(pr.cy, p2.cy, 0.6), '.', PAL.eva);
+    const refQ = pl.evaQuat || pl.ship.quat;
+    const up = qrotLocal(refQ, v3(0, 1, 0));
+    const fwd = qrotLocal(refQ, v3(1, 0, 0));
+    // when moving, lean the figure toward travel
+    const vel = vnorm(ev.vel);
+    const face = vlen(ev.vel) > 0.5 ? vnorm(vsub(vel, vscale(up, vdot(vel, up)))) : fwd;
+    this.drawAstro(ev.pos, up, face, cam, { jet: vlen(ev.vel) > 0.6 });
   }
 
-  drawFoot(ft, cam) {
+  drawFoot(ft, cam, pl) {
     const pr = this.project(ft.pos, cam);
     if (!pr) return;
-    const bob = ft.attached && Math.abs(ft.walkPhase || 0) % 2 > 1 ? 0.3 : 0;
-    this.put(pr.cx, pr.cy + bob, '@', ft.magboots ? PAL.eva : '#ff9d5c');
-    if (!ft.magboots) this.put(pr.cx + 1, pr.cy, '~', PAL.bad);
+    const body = pl.ship.landedOn || ft.body;
+    const up = ft.up;
+    const fwd = ft.face || v3(0, 0, 1);
+    const moving = vlen(ft.vel) > 0.5;
+    if (moving) ft.face = vnorm(vsub(vnorm(ft.vel), vscale(up, vdot(vnorm(ft.vel), up))));
+    this.drawAstro(ft.pos, up, ft.face || fwd, cam, {
+      jet: pl.mode === 'walk' && !ft.attached && false,
+      suit: ft.magboots ? '#e8ecf2' : '#ffb38a',
+    });
+    if (!ft.magboots) this.put(pr.cx + 2, pr.cy, '~', PAL.bad);
   }
 
   drawDrone(dr, cam) {
     const pr = this.project(dr.pos, cam);
     if (!pr) return;
     const pulse = dr.fireCd < 0.2;
-    this.put(pr.cx, pr.cy, pulse ? '&' : '%', dr.color);
-    if (pulse) this.put(pr.cx + 1, pr.cy, '*', PAL.enemyLaser);
+    const vcm = this.vCellsPerM(cam);
+    const k = this.entScale(2.4, vcm, 2, 8);
+    const a = 1.6 * k;
+    const col = dr.color;
+    this.line(pr.cx - a, pr.cy - a, pr.cx + a, pr.cy + a, pulse ? '#' : 'x', col);
+    this.line(pr.cx + a, pr.cy - a, pr.cx - a, pr.cy + a, pulse ? '#' : 'x', col);
+    this.put(pr.cx, pr.cy, pulse ? '&' : '%', '#ffd27a');
+    if (pulse) this.put(pr.cx + a + 1, pr.cy, '*', PAL.enemyLaser);
   }
 
   drawProjectiles(Gp, cam) {
